@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <chrono> //added for instrumentation perfilation
 
 #define POINTS_PER_CLOUD 100000
 #define VARIATION 0.001
@@ -882,7 +883,6 @@ static void print_transform(const std::string &label, const Transform2D &t) {
             << normalize_angle(t.theta) * 180.0 / kPi << " deg, tx=" << t.tx
             << ", ty=" << t.ty << "\n";
 }
-
 int main(int argc, char **argv) {
   bool viewer = false;
   bool export_outputs = false;
@@ -911,20 +911,48 @@ int main(int argc, char **argv) {
 
   try {
     const std::size_t points_per_cloud = POINTS_PER_CLOUD;
+
+    // profile transform_about_canvas_center
+    auto t0= std::chrono::steady_clock::now();
     const Transform2D target_to_source =
         transform_about_canvas_center(18.0 * kPi / 180.0, 620.0, -430.0);
-
+    auto t1=std::chrono::steady_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1-t0).count();
+    std::cout << "\033[32mTime_transform_about_canvas_center=" << ms << "\033[0m\n"; //added \003 to display the text in red in the terminal
+    
+    //perf generate_h_rail_cloud
+    auto t2= std::chrono::steady_clock::now();
     std::vector<Point> target = generate_h_rail_cloud(points_per_cloud, 7);
+    auto t3=std::chrono::steady_clock::now();
+    double ms2 = std::chrono::duration<double, std::milli>(t3-t2).count();
+    std::cout << "\033[32mTime_generate_h_rail_cloud=" << ms2 << "\033[0m\n"; 
+    
+    // perf apply_transform
+    auto t4= std::chrono::steady_clock::now();
     std::vector<Point> source = apply_transform(target, target_to_source);
+    auto t5=std::chrono::steady_clock::now();
+    double ms3 = std::chrono::duration<double, std::milli>(t5-t4).count();
+    std::cout << "\033[32mTime_apply_transform=" << ms3 << "\033[0m\n"; 
+    
+    //perf add_random_deformation
+    auto t6= std::chrono::steady_clock::now();
     const double deformation_rms =
         add_random_deformation(source, deformation_amplitude, 31);
+    auto t7=std::chrono::steady_clock::now();
+    double ms4 = std::chrono::duration<double, std::milli>(t7-t6).count();
+    std::cout << "\033[32mTime_add_random_deformation=" << ms4 << "\033[0m\n";
 
+    //perf sensor noise
+    auto t8= std::chrono::steady_clock::now();
     std::mt19937 rng(23);
     std::normal_distribution<double> sensor_noise(0.0, 10.0);
     for (Point &p : source) {
       p.x = std::clamp(p.x + sensor_noise(rng), 0.0, kCanvasWidth);
       p.y = std::clamp(p.y + sensor_noise(rng), 0.0, kCanvasHeight);
     }
+    auto t9=std::chrono::steady_clock::now();
+    double ms5 = std::chrono::duration<double, std::milli>(t9-t8).count();
+    std::cout << "\033[32mTime_sensor_noise=" << ms5 << "\033[0m\n";
 
     std::cout << "Generated two H-shaped rail point clouds with "
               << points_per_cloud << " points each.\n";
@@ -935,10 +963,21 @@ int main(int argc, char **argv) {
               << " units\n";
     print_transform("Synthetic target->source transform", target_to_source);
     std::cout << "Collimating source cloud onto target cloud...\n";
-
+    
+    //perf collimate_icp
+    auto t10= std::chrono::steady_clock::now();
     IcpResult result = collimate_icp(target, source, viewer || export_outputs);
+    auto t11=std::chrono::steady_clock::now();
+    double ms6 = std::chrono::duration<double, std::milli>(t11-t10).count();
+    std::cout << "\033[32mTime_collimate_icp=" << ms6 << "\033[0m\n";
+
+    // perf inverse_transform
+    auto t12= std::chrono::steady_clock::now();
     const Transform2D expected_source_to_target =
         inverse_transform(target_to_source);
+    auto t13=std::chrono::steady_clock::now();
+    double ms7 = std::chrono::duration<double, std::milli>(t13-t12).count();
+    std::cout << "\033[32mTime_inverse_transform=" << ms7 << "\033[0m\n";
 
     print_transform("Expected source->target transform",
                     expected_source_to_target);
@@ -947,7 +986,7 @@ int main(int argc, char **argv) {
     std::cout << "Finished after " << result.iterations
               << " iterations with profile_score=" << std::fixed
               << std::setprecision(8) << result.score << "\n";
-
+    //TODO: check if this code needs to be profiled as well, since it is not part of the main ICP loop and its activated via flags
     if (export_outputs) {
       export_reconstruction(output_dir, target, source, result);
     }
@@ -957,6 +996,7 @@ int main(int argc, char **argv) {
                    "green=aligned source.\n";
       show_with_gstreamer(target, source, result.snapshots);
     }
+    //Until here 
   } catch (const std::exception &ex) {
     std::cerr << "error: " << ex.what() << "\n";
     return EXIT_FAILURE;
