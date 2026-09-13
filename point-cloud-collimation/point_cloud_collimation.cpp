@@ -580,7 +580,9 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
     std::vector<Match> matches;
     matches.reserve(current.size());
     double distance_sum = 0.0;
-
+// perf this for loop to see if it is a bottleneck
+// this loop must be optimized aswell since it was found to be the second bottleneck of the whole program according to the profiling instrumentation
+    auto t36= std::chrono::steady_clock::now();
     for (const Point &p : current) {
       Point nearest_point{0.0, 0.0};
       double d2 = 0.0;
@@ -590,6 +592,9 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
         distance_sum += d2;
       }
     }
+    auto t37=std::chrono::steady_clock::now();
+    double ms16 = std::chrono::duration<double, std::milli>(t37-t36).count();
+    std::cout << "\033[32mTime_match_loop(inside collimate icp)=" << ms16 << "\033[0m\n";
 
     if (matches.size() < current.size() / 2) {
       throw std::runtime_error("Too few nearest-neighbor matches");
