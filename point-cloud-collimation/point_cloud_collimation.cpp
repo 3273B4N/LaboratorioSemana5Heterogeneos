@@ -377,7 +377,8 @@ static double nearest_neighbor_mse(const GridIndex &index,
 
   return sum / static_cast<double>(count);
 }
-
+//This function is the bottleneck of the whole program according to the profiling instrumentation
+//So optimizations will be focused on this function
 static std::vector<double> nearest_neighbor_distances(
     const GridIndex &index, const std::vector<Point> &cloud,
     double missing_distance) {
@@ -420,7 +421,7 @@ static double rmse_from_distances(const std::vector<double> &distances) {
   }
   return std::sqrt(sum2 / static_cast<double>(distances.size()));
 }
-
+//lastly, this function is also profiled since its taking the most time in the collimate_icp function
 static ProfileMetrics compare_profiles(const std::vector<Point> &target,
                                        const std::vector<Point> &source,
                                        double coverage_threshold,
@@ -428,20 +429,36 @@ static ProfileMetrics compare_profiles(const std::vector<Point> &target,
   GridIndex target_index(target, 90.0);
   GridIndex source_index(source, 90.0);
 
+  //perf the nearest_neighbor_distances to see if it is a bottleneck
+  auto t30= std::chrono::steady_clock::now();
   std::vector<double> source_distances =
-      nearest_neighbor_distances(target_index, source, missing_distance);
+      nearest_neighbor_distances(target_index, source, missing_distance);      
   std::vector<double> target_distances =
       nearest_neighbor_distances(source_index, target, missing_distance);
+  auto t31=std::chrono::steady_clock::now();
+  double ms15 = std::chrono::duration<double, std::milli>(t31-t30).count();
+  std::cout << "\033[32mTime_nearest_neighbor_distances(inside compare_profiles)=" << ms15 << "\033[0m\n";
 
   std::vector<double> all_distances = source_distances;
   all_distances.insert(all_distances.end(), target_distances.begin(),
                        target_distances.end());
-
+   //perf the centroid_of to see if it is a bottleneck
+  auto t32=std::chrono::steady_clock::now();
   const Point target_centroid = centroid_of(target);
   const Point source_centroid = centroid_of(source);
+  auto t33=std::chrono::steady_clock::now();
+  double ms16 = std::chrono::duration<double, std::milli>(t33-t32).count();
+  std::cout << "\033[32mTime_centroid_of(inside compare_profiles)=" << ms16 << "\033[0m\n";
+
   const double centroid_dx = target_centroid.x - source_centroid.x;
   const double centroid_dy = target_centroid.y - source_centroid.y;
+
+  //perf the hypot function to see if it is a bottleneck
+  auto t34=std::chrono::steady_clock::now();
   const double centroid_distance = std::hypot(centroid_dx, centroid_dy);
+  auto t35=std::chrono::steady_clock::now();
+  double ms17 = std::chrono::duration<double, std::milli>(t35-t34).count();
+  std::cout << "\033[32mTime_hypot(inside compare_profiles)=" << ms17 << "\033[0m\n";
 
   std::size_t covered = 0;
   for (double d : all_distances) {
@@ -453,12 +470,19 @@ static ProfileMetrics compare_profiles(const std::vector<Point> &target,
   return {target_centroid,
           source_centroid,
           centroid_distance,
+
           rmse_from_distances(source_distances),
           rmse_from_distances(target_distances),
           rmse_from_distances(all_distances),
+
           percentile(all_distances, 0.50),
           percentile(all_distances, 0.95),
+
+          
+
           *std::max_element(all_distances.begin(), all_distances.end()),
+
+
           static_cast<double>(covered) / static_cast<double>(all_distances.size())};
 }
 
@@ -551,7 +575,7 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
   print_profile_metrics("initial_profile_metrics", initial_metrics);
   metrics_history.push_back(
       {0, 0, total, initial_metrics, 0.0, score, 0.0, 0.0});
-
+//since this loop is the main source of computation, it will be profiled
   for (int iter = 1; iter <= 80; ++iter) {
     std::vector<Match> matches;
     matches.reserve(current.size());
@@ -571,22 +595,69 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
       throw std::runtime_error("Too few nearest-neighbor matches");
     }
 
+    //perf the estimate_rigid_transform to see if it is a bottleneck
+    auto t14= std::chrono::steady_clock::now();
     const Transform2D delta = estimate_rigid_transform(matches);
-    total = compose(delta, total);
-    current = apply_transform(current, delta);
-    const double match_rmse =
-        std::sqrt(distance_sum / static_cast<double>(matches.size()));
-    const ProfileMetrics metrics =
-        compare_profiles(target, current, match_threshold, missing_distance);
-    score = profile_score(metrics);
+    auto t15=std::chrono::steady_clock::now();
+    double ms8 = std::chrono::duration<double, std::milli>(t15-t14).count();
+    std::cout << "\033[32mTime_estimate_rigid_transform(inside collimate icp)=" << ms8 << "\033[0m\n";
 
+    //perf the compose function to see if it is a bottleneck
+    auto t16= std::chrono::steady_clock::now();
+    total = compose(delta, total);
+    auto t17=std::chrono::steady_clock::now();
+    double ms9 = std::chrono::duration<double, std::milli>(t17-t16).count();
+    std::cout << "\033[32mTime_compose(inside collimate icp)=" << ms9 << "\033[0m\n";
+    
+    //perf the apply_transform function to see if it is a bottleneck
+    auto t18= std::chrono::steady_clock::now();
+    current = apply_transform(current, delta);
+    auto t19=std::chrono::steady_clock::now();
+    double ms10 = std::chrono::duration<double, std::milli>(t19-t18).count();
+    std::cout << "\033[32mTime_apply_transform(inside collimate icp)=" << ms10 << "\033[0m\n";
+
+    //perf the match_mse variable calculation to see if it is a bottleneck
+    auto t20= std::chrono::steady_clock::now();
+    const double match_rmse =
+    std::sqrt(distance_sum / static_cast<double>(matches.size()));
+    auto t21=std::chrono::steady_clock::now();
+    double ms11 = std::chrono::duration<double, std::milli>(t21-t20).count();
+    std::cout << "\033[32mTime_match_mse(inside collimate icp)=" << ms11 << "\033[0m\n";
+    
+    //perf the compare_profiles to see if it is a bottleneck
+    auto t22= std::chrono::steady_clock::now();
+    const ProfileMetrics metrics =
+    compare_profiles(target, current, match_threshold, missing_distance);
+    auto t23=std::chrono::steady_clock::now();
+    double ms12 = std::chrono::duration<double, std::milli>(t23-t22).count();
+    std::cout << "\033[32mTime_compare_profiles(inside collimate icp)=" << ms12 << "\033[0m\n";
+
+    //perf profile_score to see if it is a bottleneck
+    auto t24= std::chrono::steady_clock::now();
+    score = profile_score(metrics);
+    auto t25=std::chrono::steady_clock::now();
+    double ms13 = std::chrono::duration<double, std::milli>(t25-t24).count();
+    std::cout << "\033[32mTime_profile_score(inside collimate icp)=" << ms13 << "\033[0m\n";
+
+    //perf score_variation calculation to see if it is a bottleneck
+    auto t26= std::chrono::steady_clock::now();
     const double score_variation =
         std::abs(previous_score - score) / std::max(previous_score, 1.0e-12);
+    auto t27=std::chrono::steady_clock::now();
+    double ms14 = std::chrono::duration<double, std::milli>(t27-t26).count();
+    std::cout << "\033[32mTime_score_variation(inside collimate icp)=" << ms14 << "\033[0m\n";
+
+    //perf the transofrm step to see if it is a bottleneck 
+    auto t28= std::chrono::steady_clock::now();
     const double transform_step =
         (std::hypot(delta.tx, delta.ty) +
          std::abs(delta.theta) * canvas_diag * 0.5) /
         canvas_diag;
-
+    auto t29=std::chrono::steady_clock::now();
+    double ms15 = std::chrono::duration<double, std::milli>(t29-t28).count();
+    std::cout << "\033[32mTime_transform_step(inside collimate icp)=" << ms15 << "\033[0m\n";
+    
+    // since this is just a print it will not be profiled
     std::cout << "iter=" << std::setw(2) << iter
               << " matches=" << std::setw(5) << matches.size()
               << " match_rmse=" << std::fixed << std::setprecision(8)
