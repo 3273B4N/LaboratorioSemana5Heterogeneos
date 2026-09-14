@@ -45,7 +45,7 @@ struct Match {
   Point target;
   double distance2;
 };
-
+//PERFIL H O RIEL
 struct ProfileMetrics {
   Point target_centroid;
   Point source_centroid;
@@ -121,7 +121,7 @@ static std::vector<Point> apply_transform(const std::vector<Point> &cloud,
   }
   return out;
 }
-
+//DEFORMACION ALEATORIA DEL PUENTE
 static double add_random_deformation(std::vector<Point> &cloud, double amplitude,
                                      unsigned int seed) {
   if (amplitude <= 0.0) {
@@ -224,7 +224,7 @@ static std::vector<Point> generate_h_rail_cloud(std::size_t n,
   std::shuffle(cloud.begin(), cloud.end(), rng);
   return cloud;
 }
-
+//CONSTRUCCION DE LA ESTRUCTURA GRINDINDEX
 class GridIndex {
  public:
   GridIndex(const std::vector<Point> &points, double cell_size)
@@ -290,7 +290,7 @@ class GridIndex {
   double cell_size_;
   std::unordered_map<std::int64_t, std::vector<int>> cells_;
 };
-
+//ESTIMACIÓN DE LA TRANSFORMADA RÍGIDA
 static Transform2D estimate_rigid_transform(const std::vector<Match> &matches) {
   if (matches.empty()) {
     throw std::runtime_error("No matches available for transform estimation");
@@ -356,7 +356,7 @@ static double principal_axis_angle(const std::vector<Point> &cloud) {
 
   return 0.5 * std::atan2(2.0 * xy, xx - yy);
 }
-
+//BUSQUEDA DE VECINOS CERCANOS
 static double nearest_neighbor_mse(const GridIndex &index,
                                    const std::vector<Point> &cloud) {
   double sum = 0.0;
@@ -419,7 +419,7 @@ static double rmse_from_distances(const std::vector<double> &distances) {
   }
   return std::sqrt(sum2 / static_cast<double>(distances.size()));
 }
-
+//COMPARACION DE PERFILES
 static ProfileMetrics compare_profiles(const std::vector<Point> &target,
                                        const std::vector<Point> &source,
                                        double coverage_threshold,
@@ -817,7 +817,7 @@ static void export_reconstruction(
   std::cout << "  source_motion.csv: accumulated rotation and translation\n";
   std::cout << "  profile_metrics.csv: centroid and profile-distance metrics\n";
 }
-
+//RENDERIZADO DE LOS CUADROS PARA EL VISOR
 static void show_with_gstreamer(const std::vector<Point> &target,
                                 const std::vector<Point> &source,
                                 const std::vector<std::vector<Point>> &frames) {
