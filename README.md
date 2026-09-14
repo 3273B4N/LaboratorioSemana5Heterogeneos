@@ -73,3 +73,105 @@ Para la visualización de los datos se pueden usar *perf record* y *perf report*
 | 14,82% | 0,00% | point_cloud_col | point_cloud_collimation | `std::__detail::_Hash_node_base* std::_Hashtable<long,...>::...` |
 
 Se puede ver muy claramente que la mayoría del tiempo y recursos se queda en el cálculo del vecino más cercano en ambos *cpu-core* y *cpu-atom*.
+
+# Ejercicio D: Perfilado mediante instrumentación
+
+## Metodología
+
+La instrumentación se realizó con `std::chrono::steady_clock`, envolviendo cada
+región de interés con un par `t0`/`t1` y calculando la duración en milisegundos
+con `std::chrono::duration<double, std::milli>`. El patrón usado en cada región fue:
+
+```cpp
+auto t0 = std::chrono::steady_clock::now();
+/* región medida */
+auto t1 = std::chrono::steady_clock::now();
+double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+std::cout << "Time_<region>=" << ms << "\n";
+```
+
+El proceso siguió estos pasos:
+
+1. **Primera pasada de instrumentación.** Se instrumentaron las llamadas a función
+   con nombre propio dentro de main: `generate_h_rail_cloud`, `add_random_deformation`,
+   `estimate_rigid_transform`, `compare_profiles`, `nearest_neighbor_distances`
+   (dentro de `compare_profiles`), `centroid_of`, `hypot`, `compose`,
+   `apply_transform`, `profile_score`, `score_variation` y `transform_step`. Acá se obtuvo que `collimate_icp` fue la funcion que consumió mas tiempo por lo que se enfoco aca el resto de la perfilación. 
+2. **Verificación con el tiempo total.** Se comparó
+   `Time_collimate_icp` (el tiempo total de la función que contiene el loop de
+   80 iteraciones) contra la suma de todas las sub-regiones medidas dentro de
+   ella. En la primera pasada, el gap sin explicar fue de **~9,951 ms (≈33% del
+   tiempo total)** — evidencia de que faltaba instrumentar una región
+   significativa.
+3. **Identificación de la región faltante.** El gap correspondía al loop de
+   búsqueda de vecino más cercano usado para construir los emparejamientos
+   (`matches`) dentro de `collimate_icp`, que no tiene una llamada a función con
+   nombre propio (es un `for` suelto que llama a `index.nearest()` directamente).
+4. **Segunda pasada de instrumentación.** Se agregó el timer `Time_match_loop`
+   alrededor de ese `for`. Al repetir el presupuesto de tiempo, el gap se redujo
+   a **~282 ms (0.93% del tiempo total)** acá ls instrumentación fue considerada completa.
+
+
+## Resultados: regiones de una sola ejecución (antes del loop del ICP)
+
+| Región | Tiempo (ms) |
+|---|---|
+| `transform_about_canvas_center` | 0.000059 |
+| `generate_h_rail_cloud` | 8.007 |
+| `apply_transform` (inicial) | 2.059 |
+| `add_random_deformation` | 17.210 |
+| `sensor_noise` | 4.801 |
+| `compare_profiles` (inicial, antes del loop) | 530.815 |
+
+## Resultados: regiones dentro del loop del ICP (45 iteraciones)
+
+| Región |Suma (ms) | Promedio (ms) | Mín (ms) | Máx (ms) |
+|---|---|---|---|---|
+| `match_loop` | 9,855.273 | 219.006 | 197.572 | 279.535 |
+| `compare_profiles` (total) | 19,444.504 | 432.100 | 382.104 | 534.126 |
+| ├─ `nearest_neighbor_distances` | 19,458.520\* | 423.011\* | — | — |
+| ├─ `centroid_of` |13.201\* | 0.287\* | — | — |
+| └─ `hypot` | 0.027\* | 0.0006\* | — | — |
+| `estimate_rigid_transform` |  19.367 | 0.430 | 0.330 | 1.040 |
+| `apply_transform` |  81.002 | 1.800 | 1.636 | 2.111 |
+| `compose` |  0.007 | 0.0001 | 0.0000 | 0.0006 |
+| `match_mse` | 0.001 | 0.0000 | 0.0000 | 0.0000 |
+| `profile_score`| 0.006 | 0.0001 | 0.0000 | 0.0005 |
+| `score_variation`|  0.006 | 0.0001 | 0.0000 | 0.0005 |
+| `transform_step` | 0.016 | 0.0004 | 0.0002 | 0.0007 |
+
+
+
+## Verificación con tiempo total
+
+| Concepto | Tiempo (ms) | % del total |
+|---|---|---|
+| `Time_collimate_icp` (total, medido con timer propio) | 30,212.988 | 100% |
+| Suma de todas las regiones instrumentadas dentro de `collimate_icp` | 29,930.996 | 99.07% |
+| **Gap sin instrumentar** | **281.992** | **0.93%** |
+
+Este tiempo sin instrumentar se puede deber al overhead que introduce este tipo de instrumentación
+
+## Distribución porcentual del tiempo dentro de `collimate_icp`
+
+| Región | Tiempo (ms) | % del total |
+|---|---|---|
+| `compare_profiles` (incluye `nearest_neighbor_distances` × 2, `centroid_of` × 2, `hypot`) | 19,444.50 | 64.36% |
+| `match_loop` (búsqueda de vecinos para el matching del ICP) | 9,855.27 | 32.62% |
+| `compare_profiles` inicial (antes del loop) | 530.81 | 1.76% |
+| Resto (`estimate_rigid_transform`, `compose`, `apply_transform`, `match_mse`, `profile_score`, `score_variation`, `transform_step`) | 100.40 | 0.33% |
+| Gap sin instrumentar | 281.99 | 0.93% |
+
+---
+
+## Preguntas del Ejercicio D
+
+- ¿La región con mayor tiempo coincide con el hotspot de perf, Google Performance Tools y Valgrind?
+
+- ¿Cuánto overhead introduce su instrumentación?
+
+  Aproximadamente unos 281.922 ms
+
+- ¿Qué partes del programa son más fáciles de entender con instrumentación manual que con muestreo?
+
+- ¿Qué información no puede obtener con instrumentación manual?
