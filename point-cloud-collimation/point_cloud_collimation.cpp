@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include <chrono> //added for instrumentation perfilation
+#include <omp.h>
 
 #define POINTS_PER_CLOUD 100000
 #define VARIATION 0.001
@@ -242,7 +243,7 @@ class GridIndex {
     nearest_distance2 = std::numeric_limits<double>::max();
     bool found = false;
 
-    for (int radius = 0; radius <= 16; ++radius) {
+    for (int radius = 0; radius <= 16; ++radius) { 
       for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
           if (std::max(std::abs(dx), std::abs(dy)) != radius) {
@@ -253,7 +254,6 @@ class GridIndex {
           if (it == cells_.end()) {
             continue;
           }
-
           for (int index : it->second) {
             const Point &candidate = points_[static_cast<std::size_t>(index)];
             const double ex = query.x - candidate.x;
@@ -384,7 +384,7 @@ static std::vector<double> nearest_neighbor_distances(
     double missing_distance) {
   std::vector<double> distances;
   distances.reserve(cloud.size());
-
+  #pragma omp parallel for //parallelizing the for loop to improve performance
   for (const Point &p : cloud) {
     Point nearest_point{0.0, 0.0};
     double d2 = 0.0;
@@ -427,7 +427,7 @@ static ProfileMetrics compare_profiles(const std::vector<Point> &target,
                                        double coverage_threshold,
                                        double missing_distance) {
   GridIndex target_index(target, 90.0);
-  GridIndex source_index(source, 90.0);
+  GridIndex source_index(source, 90.0); 
 
   //perf the nearest_neighbor_distances to see if it is a bottleneck
   auto t30= std::chrono::steady_clock::now();
