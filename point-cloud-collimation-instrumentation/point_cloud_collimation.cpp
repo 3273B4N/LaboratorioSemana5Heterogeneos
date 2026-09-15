@@ -21,7 +21,6 @@
 #include <utility>
 #include <vector>
 #include <chrono> //added for instrumentation perfilation
-#include <omp.h>
 
 #define POINTS_PER_CLOUD 100000
 #define VARIATION 0.001
@@ -384,7 +383,6 @@ static std::vector<double> nearest_neighbor_distances(
     double missing_distance) {
   std::vector<double> distances;
   distances.reserve(cloud.size());
-  #pragma omp parallel for //parallelizing the for loop to improve performance
   for (const Point &p : cloud) {
     Point nearest_point{0.0, 0.0};
     double d2 = 0.0;
