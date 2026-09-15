@@ -79,7 +79,7 @@ Se puede ver muy claramente que la mayoría del tiempo y recursos se queda en el
 
 ### Cambio realizado 
 
-Se identificó la función nearest_neighbor_distances como el principal cuello de botella del programa a partir de las pruebas realizadas con perf, Valgrind Callgrind y Google Performance Tools (Ejercicio B) y con la instrumentación manual utilizando std::chrono (Ejercicio D); posteriormente, se paralelizó dicha función. El cambio implicó añadir la directiva #pragma omp parallel for al bucle que ya existía en esta función, de modo que las llamadas a GridIndex::nearest() para cada punto de la nube se distribuyeran entre varios hilos de CPU.
+Se identificó la función nearest_neighbor_distances como el principal cuello de botella del programa a partir de las pruebas realizadas con perf, Valgrind Callgrind y Google Performance Tools (Ejercicio B) y con la instrumentación manual utilizando std::chrono (Ejercicio D); posteriormente, se paralelizó dicha función. El cambio implicó añadir la directiva `#pragma omp parallel for` al bucle que ya existía en esta función, de modo que las llamadas a GridIndex::nearest() para cada punto de la nube se distribuyeran entre varios hilos de CPU.
 
 ### Hipótesis 
 
