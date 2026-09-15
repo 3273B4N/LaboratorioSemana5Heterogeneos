@@ -406,6 +406,10 @@ La idea sería reducir el trabajo repetitivo sin modificar el resultado del algo
 
 ## Ejercicio E
 
+### Entorno de pruebas 
+
+Las mediciones se realizaron en un equipo con procesador **Intel Core i7-1165G7** (11th Gen), con 4 núcleos físicos y 8 hilos (2 hilos por núcleo vía Hyper-Threading), frecuencia máxima de 4.70 GHz y arquitectura x86_64. 
+
 ### Cambio realizado 
 
 Se identificó la función nearest_neighbor_distances como el principal cuello de botella del programa a partir de las pruebas realizadas con perf, Valgrind Callgrind y Google Performance Tools (Ejercicio B) y con la instrumentación manual utilizando std::chrono (Ejercicio D); posteriormente, se paralelizó dicha función. El cambio implicó añadir la directiva `#pragma omp parallel for` al bucle que ya existía en esta función, de modo que las llamadas a GridIndex::nearest() para cada punto de la nube se distribuyeran entre varios hilos de CPU.
@@ -413,3 +417,113 @@ Se identificó la función nearest_neighbor_distances como el principal cuello d
 ### Hipótesis 
 
 Cada llamada de GridIndex::nearest() que se hace dentro de nearest_neighbor_distances es autónoma, ya que no intercambia estado mutable entre diferentes ubicaciones en la nube, y GridIndex::nearest() es una función constante que únicamente lee la estructura de celdas previamente creada. Por ende, se prevé que la repartición de 100,000 llamadas a nearest() entre los núcleos accesibles del CPU acorte el tiempo de pared que toma esta función de manera prácticamente proporcional a la cantidad de hilos empleados, sin cambiar el resultado numérico del algoritmo (distancias iguales, profile_score igual, coverage igual), porque no se altera la lógica para buscar al vecino más cercano; solamente cambia cómo se distribuye el trabajo entre los hilos.
+
+
+### Evidencia antes y después
+
+| Métrica | Original | Paralelizado | Cambio |
+|---|---|---|---|
+| Tiempo real (`time`) | 30.957 s | 15.144 s | **-51.1%** |
+| Tiempo elapsed (`perf stat`) | 29.041 s | 14.661 s | **-49.5%** |
+| CPUs utilizados (`perf stat`) | 1.000 | 3.432 | +243% |
+| Instrucciones totales (`perf stat`) | 203,798,427,029 | 204,599,948,676 | +0.4% (prácticamente igual) |
+| Ciclos (`perf stat`) | 108,983,409,537 | 173,165,219,011 | +58.9% |
+| IPC (insn/ciclo) | 1.87 | 1.18 | -37% |
+| Branch misses | 2.28% | 2.13% | Similar |
+| Total samples (`gperftools`) | 2,831 | 5,246 | +85.3% (esperado por más CPU-tiempo) |
+| `GridIndex::nearest` self (`gperftools`) | 71.7% | 68.3% | Se mantiene como hotspot dominante |
+| `nearest_neighbor_distances` cum (`gperftools`) | 65.1% | 69.4% (vía `_omp_fn.0`) | Confirma paralelización activa |
+| Iteraciones para converger | 45 | 45 | Sin cambio |
+| profile_score final | 0.01847086 | 0.01847086 | Sin cambio |
+| coverage final | 96.94% | 96.94% | Sin cambio |
+
+**Evidencia con time**
+
+Original
+| Tipo | Tiempo |
+|---|---|
+| real | 0m30.957s |
+| user | 0m30.886s |
+| sys | 0m0.067s |
+
+Paralelizado
+| Tipo | Tiempo |
+|---|---|
+| real | 0m15.144s |
+| user | 0m52.526s |
+| sys | 0m0.041s |
+
+
+**Evidencia con perf stat**
+
+Original
+
+| Métrica | Valor |
+|---|---|
+| Task-clock | 29,035.14 msec |
+| CPUs utilizados | 1.000 |
+| Context switches | 211 |
+| CPU migrations | 3 |
+| Page faults | 44,519 |
+| Ciclos | 108,983,409,537 |
+| Instrucciones | 203,798,427,029 |
+| IPC | 1.87 |
+| Branches | 26,649,143,781 |
+| Branch misses | 607,406,801 (2.28%) |
+| Tiempo elapsed | 29.041149885 s |
+| Tiempo user | 28.974118000 s |
+| Tiempo sys | 0.061993000 s |
+
+Paralelizado
+
+| Métrica | Valor |
+|---|---|
+| Task-clock | 50,319.19 msec |
+| CPUs utilizados | 3.432 |
+| Context switches | 4,176 |
+| CPU migrations | 34 |
+| Page faults | 12,996 |
+| Ciclos | 173,165,219,011 |
+| Instrucciones | 204,599,948,676 |
+| IPC | 1.18 |
+| Branches | 26,870,833,864 |
+| Branch misses | 572,133,430 (2.13%) |
+| Tiempo elapsed | 14.661057235 s |
+| Tiempo user | 50.239416000 s |
+| Tiempo sys | 0.080884000 s |
+
+
+**Evidencia con gperftools**
+
+Original (Total: 2,831 samples)
+
+| Muestras | Self % | Cum % | Función |
+|---|---|---|---|
+| 2029 | 71.7% | 97.7% | `GridIndex::nearest` |
+| 233 | 8.2% | 79.9% | `std::_Hashtable::_M_find_before_node` (inline) |
+| 171 | 6.0% | 85.9% | `std::__detail::_Mod_range_hashing::operator` (inline) |
+| 131 | 4.6% | 90.6% | `std::__detail::_Hashtable_base::_M_equals` (inline) |
+| 6 | 0.2% | 65.1% (cum) | `nearest_neighbor_distances` [clone .constprop.0] |
+
+
+Paralelizado (Total: 5,246 samples)
+
+| Muestras | Self % | Cum % | Función |
+|---|---|---|---|
+| 3582 | 68.3% | 86.8% | `GridIndex::nearest` |
+| 626 | 11.9% | 80.2% | `omp_get_num_procs@@OMP_1.0` |
+| 290 | 5.5% | 85.7% | `std::_Hashtable::_M_find_before_node` (inline) |
+| 2 | 0.0% | 69.4% (cum) | `nearest_neighbor_distances` [clone ._omp_fn.0] |
+
+
+**Evidencia de que se mantiene el mismo resultado**
+
+| Métrica final | Original | Paralelizado |
+|---|---|---|
+| Iteraciones | 45 | 45 |
+| profile_score | 0.01847086 | 0.01847086 |
+| coverage | 96.94% | 96.94% |
+| Transform recuperado (theta) | -18.00595° | -18.00595° |
+| Transform recuperado (tx, ty) | (-1720.41, 1781.98) | (-1720.41, 1781.98) |
+
+
