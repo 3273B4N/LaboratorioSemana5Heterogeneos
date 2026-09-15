@@ -73,3 +73,14 @@ Para la visualización de los datos se pueden usar *perf record* y *perf report*
 | 14,82% | 0,00% | point_cloud_col | point_cloud_collimation | `std::__detail::_Hash_node_base* std::_Hashtable<long,...>::...` |
 
 Se puede ver muy claramente que la mayoría del tiempo y recursos se queda en el cálculo del vecino más cercano en ambos *cpu-core* y *cpu-atom*.
+
+
+## Ejercicio E
+
+### Cambio realizado 
+
+Se identificó la función nearest_neighbor_distances como el principal cuello de botella del programa a partir de las pruebas realizadas con perf, Valgrind Callgrind y Google Performance Tools (Ejercicio B) y con la instrumentación manual utilizando std::chrono (Ejercicio D); posteriormente, se paralelizó dicha función. El cambio implicó añadir la directiva #pragma omp parallel for al bucle que ya existía en esta función, de modo que las llamadas a GridIndex::nearest() para cada punto de la nube se distribuyeran entre varios hilos de CPU.
+
+### Hipótesis 
+
+Cada llamada de GridIndex::nearest() que se hace dentro de nearest_neighbor_distances es autónoma, ya que no intercambia estado mutable entre diferentes ubicaciones en la nube, y GridIndex::nearest() es una función constante que únicamente lee la estructura de celdas previamente creada. Por ende, se prevé que la repartición de 100,000 llamadas a nearest() entre los núcleos accesibles del CPU acorte el tiempo de pared que toma esta función de manera prácticamente proporcional a la cantidad de hilos empleados, sin cambiar el resultado numérico del algoritmo (distancias iguales, profile_score igual, coverage igual), porque no se altera la lógica para buscar al vecino más cercano; solamente cambia cómo se distribuye el trabajo entre los hilos.
