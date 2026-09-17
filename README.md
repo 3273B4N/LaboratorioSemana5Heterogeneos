@@ -526,4 +526,13 @@ Paralelizado (Total: 5,246 samples)
 | Transform recuperado (theta) | -18.00595° | -18.00595° |
 | Transform recuperado (tx, ty) | (-1720.41, 1781.98) | (-1720.41, 1781.98) |
 
+## Conclusión
+
+La hipótesis fue corroborada. El tiempo de ejecución real se redujo cerca del 50 % (de unos 30 segundos a alrededor de 15 segundos, lo cual fue verificado tanto por perf stat como por time) al paralelizar nearest_neighbor_distances con OpenMP, sin que el resultado numérico del algoritmo se modificara: los dos tipos alcanzaron la misma convergencia en 45 iteraciones, con el mismo coverage (96.94 %) y profile_score (0.01847086).
+
+El mecanismo que sustenta la mejora está respaldado por el evidenciado de perf stat: el total de instrucciones ejecutadas se mantuvo casi igual entre las dos versiones (+0.4%), mientras que la cantidad de CPUs empleadas aumentó de 1.0 a 3.432. Esto corrobora que el aumento del rendimiento se debió únicamente a la repartición del trabajo existente entre varios núcleos, no a una disminución real de la cantidad de trabajo realizado, lo cual valida la premisa inicial de la hipótesis: que las llamadas a GridIndex::nearest() dentro del bucle eran independientes y podían ser distribuidas entre hilos sin peligro.
+
+La única conclusión inesperada fue un overhead medible de OpenMP (~12% de las muestras en gperftools, debido a omp_get_num_procs), el cual no contradice la hipótesis, pero plantea una posibilidad más para optimizar: establecer el número de hilos solo al comienzo del programa en vez de recalcularlo con cada llamada.
+
+
 
