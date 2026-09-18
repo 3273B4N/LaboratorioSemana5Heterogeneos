@@ -74,6 +74,102 @@ Para la visualización de los datos se pueden usar *perf record* y *perf report*
 
 Se puede ver muy claramente que la mayoría del tiempo y recursos se queda en el cálculo del vecino más cercano en ambos *cpu-core* y *cpu-atom*.
 
+<<<<<<< HEAD
+# Ejercicio D: Perfilado mediante instrumentación
+
+## Metodología
+
+La instrumentación se realizó con `std::chrono::steady_clock`, envolviendo cada
+región de interés con un par `t0`/`t1` y calculando la duración en milisegundos
+con `std::chrono::duration<double, std::milli>`. 
+
+
+El proceso siguió estos pasos:
+1. **Primera pasada de instrumentación.** Se instrumentaron las llamadas a función
+   con nombre propio dentro de main: `generate_h_rail_cloud`, `add_random_deformation`,
+   `estimate_rigid_transform`, `compare_profiles`, `nearest_neighbor_distances`
+   (dentro de `compare_profiles`), `centroid_of`, `hypot`, `compose`,
+   `apply_transform`, `profile_score`, `score_variation` y `transform_step`. Acá se
+   obtuvo que `collimate_icp` fue la función que consumió más tiempo, por lo que
+   se enfocó ahí el resto de la perfilación.
+2. **Verificación contra tiempo total.** Se comparó
+   `Time_collimate_icp` (el tiempo total de la función que contiene el loop de
+   80 iteraciones, medido con `chrono`) contra la suma de todas las sub-regiones
+   medidas dentro de ella (también con `chrono`). En la primera pasada, el tiempo
+   sin explicar fue de **~9,951 ms (≈33% del tiempo total)**, lo cual evidenció
+   que faltaba instrumentar una región.
+3. **Identificación de la región faltante.** El tiempo sin medir correspondía al loop de
+   búsqueda de vecino más cercano usado para construir los emparejamientos
+   (`matches`) dentro de `collimate_icp`, que no tiene una llamada a función con
+   nombre propio (es un for suelto que llama a `index.nearest()` directamente).
+4. **Segunda pasada de instrumentación.** Se agregó el timer `Time_match_loop`
+   alrededor de ese `for`. Al repetir la verificación, el tiempo
+   sin explicar se redujo a **~282 ms (0.93% del tiempo total)**, por lo que la
+   instrumentación se consideró completa. Posteriormente, en la sección
+   "Verificación con tiempo total", se contrastó este resultado contra el
+   tiempo real de ejecución reportado por la shell, para estimar el overhead
+   que introduce la instrumentación.
+
+## Resultados: regiones de una sola ejecución 
+| Región | Tiempo (ms) |
+|---|---|
+| `transform_about_canvas_center` | 0.000059 |
+| `generate_h_rail_cloud` | 8.007 |
+| `apply_transform` (inicial) | 2.059 |
+| `add_random_deformation` | 17.210 |
+| `sensor_noise` | 4.801 |
+| `compare_profiles` (inicial, antes del loop) | 530.815 |
+| `collimate_icp`  | 30,212.988 |
+
+## Resultados: regiones dentro del loop de `collimate_icp` 
+
+| Región | Suma (ms) | % del total | Promedio (ms) | Mín (ms) | Máx (ms) |
+|---|---|---|---|---|---|
+| `match_loop` | 9,855.273 | 32.62% | 219.006 | 197.572 | 279.535 |
+| `compare_profiles` (total) | 19,444.504 | 64.36% | 432.100 | 382.104 | 534.126 |
+| ├─ `nearest_neighbor_distances` | 19,458.520\* | 64.40%\* | 423.011\* | — | — |
+| ├─ `centroid_of` | 13.201\* | 0.04%\* | 0.287\* | — | — |
+| └─ `hypot` | 0.027\* | 0.0001%\* | 0.0006\* | — | — |
+| `estimate_rigid_transform` | 19.367 | 0.06% | 0.430 | 0.330 | 1.040 |
+| `apply_transform` | 81.002 | 0.27% | 1.800 | 1.636 | 2.111 |
+| `compose` | 0.007 | 0.00002% | 0.0001 | 0.0000 | 0.0006 |
+| `match_mse` | 0.001 | 0.000003% | 0.0000 | 0.0000 | 0.0000 |
+| `profile_score` | 0.006 | 0.00002% | 0.0001 | 0.0000 | 0.0005 |
+| `score_variation` | 0.006 | 0.00002% | 0.0001 | 0.0000 | 0.0005 |
+| `transform_step` | 0.016 | 0.00005% | 0.0004 | 0.0002 | 0.0007 |
+
+Nota: aca se cuentan todas las iteraciones del for dentreo de `collimate_icp`, el % se calculo respecto al tiempo total de ejecucion de esta funcion encontrado anteriormente.
+
+## Verificación con tiempo total
+Para verificar si se estaba midiendo todo el programa, se comparó el tiempo total medido con el tiempo de ejecucion real reportado por time.
+| Concepto | Tiempo (ms) |
+|---|---|
+| Tiempo real de ejecución  | 30,170.0 |
+| Suma de toda la instrumentacion | 30,158.901 |
+| Tiempo sin medir | ~11.1 (0.04%) |
+
+Este tiempo sin medir se toma como el overhead que introduce este tipo de instrumentación debido a que no se encontro otra funcion que pudiera añadir mas tiempo.
+
+
+---
+
+## Preguntas
+
+- ¿La región con mayor tiempo coincide con el hotspot de perf, Google Performance Tools y Valgrind?
+
+   Aunque con los otros metodos de instrumentacion se encontro que el cuello de botella era el metodo `nearest`, si se coincidió en la region que llama a este metodo el cual fue la función de `nearest_neighbor_distances`
+- ¿Cuánto overhead introduce su instrumentación?
+
+  Aproximadamente unos 11.1 ms
+
+- ¿Qué partes del programa son más fáciles de entender con instrumentación manual que con muestreo?
+
+   Los ciclos y las llamadas de funciones son más fáciles de entender con instrumentación manual ya que al tener que poner los puntos a revisar se puede verificar si una función está siendo llamada iterativamente y si el uso que se le da a esta función en una parte específica del programa puede añadir más tiempo, por ejemplo varias funciones hacen uso de el método `nearest` de la clase `GridIndex` sin embargo `nearest_neighbor_distances` fue la función que se encontró que hace un uso más excesivo de este método (reflejado en su tiempo de ejecución).
+
+- ¿Qué información no puede obtener con instrumentación manual?
+
+   No se puede ver que es lo que se esta compilando o ejecutando (no se hace un análisis del codigo ensamblador), ademas de que no se pueden ver otras metricas de hardware que pueden estar afectando la ejecucion del programa por ejemplo los cache-misses o los branch-misspredictions
+=======
 ## Perfilado con Ensamblador
 
 ```bash
@@ -304,3 +400,4 @@ Las otras opciones tendrían una prioridad menor según los resultados obtenidos
 Por esto, intentaría primero optimizar la estructura utilizada para realizar la búsqueda de vecinos. Una posibilidad concreta sería evitar reconstrucciones innecesarias del `GridIndex` del perfil objetivo. En `compare_profiles` se identificaron dos llamadas a `_Map_base::operator[]` relacionadas con la construcción de `GridIndex`. Como el perfil objetivo permanece constante durante las iteraciones del ICP, investigaría si este índice puede construirse una sola vez y reutilizarse.
 
 La idea sería reducir el trabajo repetitivo sin modificar el resultado del algoritmo. Después de implementar el cambio, se debería comparar nuevamente el tiempo de ejecución y verificar que los resultados de `profile_metrics.csv` se mantengan iguales.
+>>>>>>> origin/develop

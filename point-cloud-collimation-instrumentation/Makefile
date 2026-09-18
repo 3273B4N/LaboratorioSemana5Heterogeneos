@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic -g
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic -g  -fopenmp
 PKG_CONFIG ?= pkg-config
 GST_CFLAGS := $(shell $(PKG_CONFIG) --cflags gstreamer-1.0 gstreamer-app-1.0)
 GST_LIBS := $(shell $(PKG_CONFIG) --libs gstreamer-1.0 gstreamer-app-1.0)
