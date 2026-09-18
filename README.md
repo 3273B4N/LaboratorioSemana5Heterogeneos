@@ -40,6 +40,7 @@
   - [Hipótesis](#hipótesis)
   - [Evidencia antes y después](#evidencia-antes-y-después)
   - [Conclusión](#conclusión)
+- [Nota sobre IA](#nota-sobre-utilización-de-herramientas-de-ia)
 
 En este laboratorio se perfilará, analizará y optimizará el código de un colimador que alinea 2 rieles o perfiles H. Este código usa centroides (centros de masa) para calcular distancias, se usan 2 perfiles, uno de referencia y otro de estado actual, el centroide de referencia nunca se mueve, pero el de estado actual es el que se usa para medir desplazamientos y distancias. Esta distancia por medio de traslaciones, rotaciones y transformaciones, siempre comparando y recalculado, cada iteración para acercarse a la alineación de los rieles. Para hacer estas comparaciones y mediciones se usan varios medidores, pero 3 son de interés: *match_rsme*, *symmetric_chamfer_rmse*, *profile_score*:
 * match_rmse: RMSE calculado solo sobre los emparejamientos usados para estimar la transformación de esa iteración. Es una medida "interna" del ajuste local usado para la optimización, dice qué tan bien va cada iteración, qué tanto "match" hace entre los rieles.
@@ -693,6 +694,14 @@ La hipótesis fue corroborada. El tiempo de ejecución real se redujo cerca del 
 El mecanismo que sustenta la mejora está respaldado por el evidenciado de perf stat: el total de instrucciones ejecutadas se mantuvo casi igual entre las dos versiones (+0.4%), mientras que la cantidad de CPUs empleadas aumentó de 1.0 a 3.432. Esto corrobora que el aumento del rendimiento se debió únicamente a la repartición del trabajo existente entre varios núcleos, no a una disminución real de la cantidad de trabajo realizado, lo cual valida la premisa inicial de la hipótesis: que las llamadas a GridIndex::nearest() dentro del bucle eran independientes y podían ser distribuidas entre hilos sin peligro.
 
 La única conclusión inesperada fue un overhead medible de OpenMP (~12% de las muestras en gperftools, debido a omp_get_num_procs), el cual no contradice la hipótesis, pero plantea una posibilidad más para optimizar: establecer el número de hilos solo al comienzo del programa en vez de recalcularlo con cada llamada.
+
+# Nota sobre utilización de herramientas de IA
+
+Se hace uso de herramientas de IA como apoyo para comprender conceptos, generar ideas y mejorar la redacción de la documentación. La implementación, la validación y los resultados son responsabilidad del estudiante, quien asume la responsabilidad por el uso indebido o no descrito anteriormente.
+
+Se adjuntan los enlaces compartidos de las conversaciones como evidencia:
+  - https://claude.ai/chat/e38160a4-d029-48b2-b4e1-3f724f0f74c3
+  - https://claude.ai/chat/7201ddbf-e077-4bb7-8c01-43d5cc50e4e0
 
 
 
