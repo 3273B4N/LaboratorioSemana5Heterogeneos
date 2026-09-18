@@ -11,11 +11,17 @@ add_random_deformation: desplaza cada punto con una combinación de ondas senoid
 Estimate_rigid_transform solo puede modelar transformaciones rígidas. Como la nube fuente real ya no es una copia rígida exacta del target, no existe ninguna rotación+traslación única que mapee todos los puntos deformados exactamente sobre el target. El algoritmo encuentra la mejor rotación/traslación en promedio sobre los emparejamientos, pero cada iteración empareja puntos por vecino-más-cercano, y esos emparejamientos ya están contaminados por el desplazamiento no uniforme de la deformación.
 El resultado converge, pero nunca es perfecto porque la deformación real no es representable por el modelo rígido.
 
-## Perfilado del código
+# Ejercicio B
 
 El código se perfilará con 3 herramientas: *perf*, *valgrind/callgrind* y *google-perf/pprof*.
 
-### Perfilado con *perf*
+## Metodología 
+
+Se emplearon tres instrumentos de análisis de rendimiento: **perf**, **Valgrind Callgrind** y **Google Performance Tools (gperftools)** para identificar los puntos críticos del programa `point_cloud_collimation`. Para calcular el costo extra de escribir los archivos de reconstrucción en disco, cada herramienta se utilizó con dos configuraciones: una sin `--export` y otra con `--export`.
+
+Para gperftools, el programa se recompiló vinculando de manera explícita `libprofiler` (`-lprofiler`), y los perfiles se produjeron usando la variable `CPUPROFILE`, que luego fueron examinados a través de `google-pprof --text`. Para Valgrind, se utilizó `callgrind_annotate` para conseguir el desglose de instrucciones que fueron ejecutadas por cada línea de código. Para comprobar la consistencia entre diferentes métodos de medición (es decir, entre el muestreo estadístico y el conteo exacto de instrucciones), se compararon los resultados de las dos herramientas entre sí y con los datos obtenidos de `perf stat` o `perf report` en otra máquina.
+
+## Perfilado con *perf*
 Se correrá el código en una laptop con 13th Gen i5-1334U, con 16 GiB de RAM en Arch Linux, kernel Linux 7.1.8-arch1-3. El perfilado de *perf* comienza con mediciones generales del código de colimado, corriendo:
 
 perf stat ./point_cloud_collimation
@@ -75,6 +81,116 @@ Para la visualización de los datos se pueden usar *perf record* y *perf report*
 Se puede ver muy claramente que la mayoría del tiempo y recursos se queda en el cálculo del vecino más cercano en ambos *cpu-core* y *cpu-atom*.
 
 <<<<<<< HEAD
+
+## Perfilado con *Valgrind Callgrind*
+
+El perfilado con Callgrind simula la ejecución completa del programa e instrumenta cada instrucción ejecutada, dando un conteo exacto (no muestreado) del costo por función y por línea de código. Se ejecutó en dos configuraciones:
+
+valgrind --tool=callgrind ./point_cloud_collimation
+
+valgrind --tool=callgrind ./point_cloud_collimation --export
+
+Cada corrida genera un archivo `callgrind.out.<PID>`, analizado luego con:
+
+callgrind_annotate callgrind.out.<PID>
+
+Debido al overhead de instrumentación de Valgrind (entre 20 y 50 veces más lento que la ejecución normal), cada corrida tomó varios minutos en completarse. A cambio, esta herramienta ofrece el desglose más preciso y granular, permitiendo ver línea por línea del código fuente cuáles instrucciones concentran más ciclos de CPU.
+
+Se presentan los datos generales del perfilado:
+
+| Métrica | Sin --export | Con --export | Notas |
+|---|---|---|---|
+| **Instrucciones totales (Ir)** | 203,397,705,129 | 239,891,504,097 | +17.9% por I/O de exportación |
+| **GridIndex::nearest** | 83.40% | 70.71% | Hotspot dominante en ambas configuraciones |
+| Acceso a std::vector (dentro de nearest) | 10.28% | 8.72% | Vía stl_vector.h |
+| Hashtable interno (hashtable.h + policy) | ~4.5% | ~3.42% | Estructuras de std::unordered_map |
+| write_cloud_csv (acumulado, 29 invocaciones) | — | 12.14% | Solo aparece con --export |
+| printf_fp / hack_digit (formateo de texto) | — | ~5.3% | Solo aparece con --export |
+
+
+## Perfilado con *Google Performance Tools (gperftools)*
+
+Se corrió el código usando gperftools (paquetes `google-perftools` y `libgoogle-perftools-dev`). A diferencia de Valgrind, gperftools usa muestreo por señales de tiempo, con mucho menor overhead, lo que permite ejecuciones a velocidad casi normal.
+
+Para generar los perfiles, primero fue necesario recompilar el programa forzando al enlazador a conservar la biblioteca `libprofiler`:
+
+make CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -pedantic -fno-omit-frame-pointer" \
+GST_LIBS="-Wl,--no-as-needed -lprofiler -Wl,--as-needed $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0)"
+
+Y verificando el enlace con:
+
+ldd ./point_cloud_collimation | grep profiler
+
+Los perfiles se generaron definiendo la variable `CPUPROFILE`, en las mismas dos configuraciones (con y sin `--export`):
+
+CPUPROFILE=point_cloud.prof ./point_cloud_collimation
+
+CPUPROFILE=point_cloud_export.prof ./point_cloud_collimation --export
+
+Y se analizaron con:
+
+google-pprof --text ./point_cloud_collimation point_cloud.prof
+
+Se presentan los datos generales del perfilado:
+
+| Métrica | Sin --export | Con --export | Notas |
+|---|---|---|---|
+| **Total de samples** | 2,844 | 3,338 | +17.4% por I/O de exportación |
+| **GridIndex::nearest** | 73.9% | 66.4% | Hotspot dominante en ambas configuraciones |
+| _Hashtable::_M_find_before_node (inline) | 8.1% | 6.4% | Búsqueda dentro de la hashtable de celdas |
+| nearest_neighbor_distances (cum) | 64.8% | 58.0% | Función que envuelve las llamadas a nearest() |
+| export_reconstruction (inline) | — | 10.4% | Solo aparece con --export |
+| write_cloud_csv | — | 9.5% | Solo aparece con --export |
+| printf_fp_l / num_put (formateo de texto) | — | ~10.4% | Solo aparece con --export |
+
+
+## Comparación de herramientas de profiling 
+
+### Tabla comparativa: hotspot principal por herramienta
+
+| Herramienta | Configuración | % en GridIndex::nearest | Referencia |
+|---|---|---|---|
+| perf (perf report) | sin --export | 73.78% (children/self) | - |
+| perf (perf report, cpu-core) | con --export | 97.88% (self) | - |
+| gperftools | sin --export | 73.9% | 2,844 samples totales |
+| gperftools | con --export | 66.4% | 3,338 samples totales (+17.4%) |
+| Valgrind Callgrind | sin --export | 83.40% | 203,397,705,129 instrucciones (Ir) |
+| Valgrind Callgrind | con --export | 70.71% | 239,891,504,097 instrucciones (Ir) (+17.9%)|
+
+## Preguntas
+
+### ¿Cuáles funciones aparecen como hotspots en cada herramienta?
+
+**perf:**
+- `GridIndex::nearest` aparece como el hotspot dominante en ambos desgloses de arquitectura reportados (73.78% en la agrupación cpu-atom y 97.88% self en la agrupación cpu-core)
+- Funciones internas de hashtable (`std::unordered_map::find`, `std::_Hashtable`) como consumidoras secundarias de alrededor de 17% cada una
+
+**gperftools:**
+- `GridIndex::nearest` — 73.9% (sin --export), 66.4% (con --export)
+- `std::_Hashtable::_M_find_before_node` (inline) — 8.1% / 6.4%
+- Con `--export` aparecen además: `export_reconstruction` (10.4%), `write_cloud_csv` (9.5%), y funciones de formateo de números (`__GI___printf_fp_l`, `std::num_put`)
+
+**Valgrind Callgrind:**
+- `GridIndex::nearest` — 83.40% (sin --export), 70.71% (con --export)
+- Acceso a `std::vector` dentro de `nearest` (vía `stl_vector.h`) — 10.28% / 8.72%
+- `std::hashtable` y `hashtable_policy` internos — ~2-4% cada uno
+- Con `--export`, la llamada a `write_cloud_csv` desde `export_reconstruction` acumula 12.14% del total (correspondiente a sus 29 invocaciones dentro del ciclo de exportación de frames)
+
+
+En las tres herramientas, **`GridIndex::nearest` es la función que prevalece de manera dominante**, mientras que las funciones secundarias están relacionadas con las estructuras internas de `std::unordered_map`.
+
+### ¿Los resultados coinciden entre perf, Google Performance Tools y Valgrind? Explique las diferencias.
+
+Sí, las tres herramientas concuerdan en que `GridIndex::nearest` es el hotspot más dominante del programa, aunque con porcentajes diferentes (de 66 % a 97 %, dependiendo de la herramienta y de la configuración). Las diferencias se deben a cómo se mide cada una: perf emplea muestreo estadístico por eventos de hardware, con interrupciones periódicas del CPU, y es sensible al tipo de núcleo en el que corre (cpu-core reportó 97.88% self mientras que cpu-atom reportó 73.78%, para la misma ejecución). Gperftools también emplea el muestreo, aunque lo hace a través de señales temporales, con un overhead más bajo que Valgrind, pero una precisión inferior a la de un conteo exhaustivo. Por otro lado, Valgrind Callgrind simula el programa entero e instrumenta cada instrucción que se ejecuta, lo que proporciona la contabilización más precisa y exhaustiva de las tres (83.40% sin --export), ya que no se basa en muestreo sino en un conteo real de instrucciones. Las tres concuerdan además en el mecanismo interno del cuello de botella: el costo se concentra en las operaciones de hashtable (`_M_find_node`, `_M_find_before_node`, `_M_bucket_index`), que emplean `GridIndex::nearest` para localizar puntos por celda. 
+
+### ¿Qué costo tiene exportar los archivos de reconstrucción?
+
+Las tres herramientas concuerdan en que la exportación supone un costo adicional real, aunque sea secundario en comparación con el costo del algoritmo de emparejamiento. Con perf, el tiempo total aumentó de 23.80s a 25.36s (+6.5%), y el tiempo del sistema casi se triplicó (0.064s → 0.184s) a causa del I/O de escritura en disco. Con gperftools, el número total de muestras aumentó de 2,844 a 3,338 (un incremento del 17.4%), con la introducción de nuevas funciones como `export_reconstruction` (10.4%) y `write_cloud_csv` (9.5%), así como trabajo de formateo de números en texto (`printf_fp`, `num_put`). Con Valgrind, las instrucciones anotadas aumentaron de cerca de 203.4 a 239.9 mil millones, lo que representa un incremento del 17.9%. En la versión con exportación, la llamada a `write_cloud_csv` desde `export_reconstruction` acumuló 12.14% del total de instrucciones, correspondiente a sus 29 invocaciones dentro del ciclo de exportación de frames, aunque el costo propio de la función por sí sola es menor.
+
+### ¿Qué herramienta le dio la evidencia más clara para decidir dónde optimizar?
+
+Valgrind Callgrind proporcionó la evidencia más exacta y accionable porque mide instrucciones precisas en lugar de apoyarse en el muestreo, y posibilita observar, línea por línea, las operaciones que dentro de `GridIndex::nearest` requieren más ciclos. Por ejemplo, el cálculo de distancia al cuadrado (`ex*ex + ey*ey`) y la iteración de puntos dentro de cada celda representan entre el 12% y el 15% del total de instrucciones. Perf y gperftools fueron capaces de determinar con rapidez cuál era la función principal que constituía el hotspot, sin requerir el nivel de detalle línea por línea que proporciona Valgrind; además, su ejecución fue más rápida. Para un diagnóstico inicial, perf y gperftools son más útiles; Valgrind proporciona la evidencia más exacta y fiable para determinar con precisión qué línea de código abordar primero.
+
 # Ejercicio D: Perfilado mediante instrumentación
 
 ## Metodología
